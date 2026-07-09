@@ -1,0 +1,7 @@
+{
+  "tag": "restored_balanced_2ep",
+  "judge": "granite",
+  "asr_harmful": 0.24,
+  "over_refusal_benign": 0.004,
+  "refusal_harmful": 0.76
+}

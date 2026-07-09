@@ -1,0 +1,6 @@
+started: Wed Jul  8 12:04:49 PM EDT 2026
+`torch_dtype` is deprecated! Use `dtype` instead!
+Loading checkpoint shards:   0%|          | 0/2 [00:00<?, ?it/s]Loading checkpoint shards: 100%|██████████| 2/2 [00:00<00:00, 134.52it/s]
+Loading checkpoint shards:   0%|          | 0/2 [00:00<?, ?it/s]Loading checkpoint shards: 100%|██████████| 2/2 [00:00<00:00, 159.97it/s]
+kept 348/392 clean pairs -> data/prefs.jsonl
+exit=0 finished: Wed Jul  8 12:06:18 PM EDT 2026

@@ -1,0 +1,38 @@
+# ─── Model weights & training checkpoints (multi-GB; GitHub blocks files >100 MB) ──
+# Each runs/ SUBdirectory is a checkpoint (merged weights, LoRA adapters, optimizer
+# state). The top-level runs/*.png, runs/*.json, runs/*.log — figures, result files,
+# and logs referenced by README.md / RESULTS.md — are kept.
+runs/*/
+
+# Belt-and-suspenders: never commit large weight formats, wherever they land.
+*.safetensors
+*.bin
+*.ckpt
+*.gguf
+*.pth
+# (artifacts/*.pt are tiny extracted refusal directions — intentionally kept.)
+
+# ─── Python ────────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# ─── Virtualenv / editor / OS ────────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+.env
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# ─── Misc caches (in case HF_HOME / wandb ever point inside the repo) ────────────────
+.cache/
+huggingface/
+wandb/

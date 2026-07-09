@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "refusal-dpo"
+version = "0.1.0"
+description = "Refusal-direction jailbreak -> DPO restore -> re-attack (rank-vs-ASR) on Llama-3.2-3B"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.1",
+    "transformers>=4.44",
+    "trl>=0.12,<0.24",   # tested with 0.23.1 (DPOConfig/DPOTrainer + processing_class=)
+    "peft>=0.12",
+    "datasets>=2.20",
+    "accelerate>=0.33",
+    "numpy>=1.24",
+    "pyyaml>=6.0",
+    "matplotlib>=3.7",   # scripts/plot_results.py (result figures)
+]
+
+[project.scripts]
+refusal-extract       = "refusal_dpo.direction.extract:main"
+refusal-orthogonalize = "refusal_dpo.model.orthogonalize:main"
+refusal-build-prefs   = "refusal_dpo.data.build_prefs:main"
+refusal-dpo           = "refusal_dpo.train.train_dpo:main"
+refusal-evaluate      = "refusal_dpo.eval.evaluate:main"
+refusal-reattack      = "refusal_dpo.eval.reattack:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-dir]
+"" = "src"
