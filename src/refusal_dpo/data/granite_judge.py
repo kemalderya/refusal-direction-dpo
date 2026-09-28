@@ -19,6 +19,8 @@ from __future__ import annotations
 from functools import lru_cache
 import torch
 
+from refusal_dpo.chat import pinned_strftime
+
 MODEL_ID = "ibm-granite/granite-guardian-3.1-2b"
 _UNSAFE = "yes"   # Granite emits "Yes" when the named risk IS present
 
@@ -55,7 +57,8 @@ def harmful_batch(pairs, risk_name="harm", bs=8, max_new_tokens=6):
                     {"role": "assistant", "content": resp}]
             rendered.append(tok.apply_chat_template(
                 msgs, guardian_config={"risk_name": risk_name},
-                tokenize=False, add_generation_prompt=True))
+                tokenize=False, add_generation_prompt=True,
+                strftime_now=pinned_strftime))  # template stamps today's date
         enc = tok(rendered, return_tensors="pt", padding=True,
                   add_special_tokens=False).to(model.device)
         out = model.generate(**enc, max_new_tokens=max_new_tokens, do_sample=False,

@@ -38,9 +38,14 @@ def collect_last_token_acts(model, tokenizer, prompts, batch_size=16, device=Non
         enc = tokenizer(chunk, return_tensors="pt", padding=True,
                         add_special_tokens=False).to(device)
         hs = model(**enc, output_hidden_states=True).hidden_states  # tuple[L+1]
-        # last non-pad position per row
-        last = enc["attention_mask"].sum(1) - 1
-        rows = torch.arange(hs[0].size(0))
+        # Last non-pad position per row. NOTE: `attention_mask.sum(1) - 1` is the
+        # RIGHT-padding formula, but every caller sets padding_side="left" (their
+        # tokenizer is shared with generation, which requires left padding) — under
+        # left padding the real tokens end at T-1, so sum-1 silently reads a token
+        # mid-prompt. Locating the last 1 in the mask is correct for either side.
+        mask = enc["attention_mask"]
+        last = mask.shape[1] - 1 - mask.flip(1).argmax(1)
+        rows = torch.arange(hs[0].size(0), device=last.device)
         # stack layers -> [B, L+1, d]
         acts = torch.stack([h[rows, last] for h in hs], dim=1)
         out.append(acts.float().cpu())

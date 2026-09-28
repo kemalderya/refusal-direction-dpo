@@ -21,12 +21,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from refusal_dpo.model.hooks import collect_last_token_acts, ablate_direction
 from refusal_dpo.data.refusal_judge import is_refusal
 from refusal_dpo.device import best_device, model_dtype
-
-
-def chat_prompt(tokenizer, instruction: str) -> str:
-    return tokenizer.apply_chat_template(
-        [{"role": "user", "content": instruction}],
-        tokenize=False, add_generation_prompt=True)
+from refusal_dpo.chat import chat_prompt  # re-exported: evaluate.py / reattack.py import it from here
 
 
 def diff_in_means(harmful_acts, harmless_acts):
@@ -54,7 +49,9 @@ def main():
     ap.add_argument("--model", default="meta-llama/Llama-3.2-3B-Instruct")
     ap.add_argument("--harmful", required=True, help="AdvBench harmful instructions (.txt/.jsonl)")
     ap.add_argument("--harmless", required=True, help="Alpaca harmless instructions (.txt/.jsonl)")
-    ap.add_argument("--out", default="artifacts/refusal_dir.pt")
+    # not artifacts/refusal_dir.pt: that committed file is the jailbreak direction behind
+    # every Milestone 1 number (run_all.sh builds runs/jailbroken from it)
+    ap.add_argument("--out", default="artifacts/refusal_dir_fixed.pt")
     ap.add_argument("--n-extract", type=int, default=256)
     ap.add_argument("--harmful-val", default=None,
                     help="separate held-out harmful set for LAYER SELECTION (e.g. HarmBench). "

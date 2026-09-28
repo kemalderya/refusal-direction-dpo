@@ -10,7 +10,7 @@ Procedure for a given model (original / jailbroken / DPO-restored):
 
 Read-out:
   - DPO'd model still falls to rank-1 ablation  -> refusal RELOCATED to one direction;
-    the vulnerability moved, it didn't disappear (your RTV thesis, confirmed).
+    the vulnerability moved, it didn't disappear.
   - DPO'd model needs higher rank / never fully jailbreaks -> refusal DISTRIBUTED;
     genuine robustness gain.
 

@@ -38,47 +38,91 @@ def _despine(ax):
 
 
 def reattack_fig():
-    orig = json.loads((RUNS / "reattack_original.json").read_text())["rank_asr_curve"]
-    rest = json.loads((RUNS / "reattack_restored_balanced_2ep.json").read_text())["rank_asr_curve"]
+    # *_fixed.json = the corrected curves (post last-token indexing fix in hooks.py).
+    # The un-suffixed files hold the SUPERSEDED pre-fix curves; see RESULTS.md.
+    #
+    # Each model is attacked in its OWN layer order (top-6 layers by single-direction
+    # refusal-under-ablation on held-out val). The restored model is also shown under the
+    # base model's order (dashed) — that curve looked "higher-rank", but only because the
+    # base order puts restored's decisive layer (15) fourth.
+    orig_j = json.loads((RUNS / "reattack_original_fixed.json").read_text())
+    orig, orig_layers = orig_j["rank_asr_curve"], orig_j["layers"]
+    rest_base = json.loads((RUNS / "reattack_restored_balanced_2ep_fixed.json").read_text())["rank_asr_curve"]
+    own_path = RUNS / "reattack_restored_ownorder_fixed.json"
+    if own_path.exists():
+        own_j = json.loads(own_path.read_text())
+        rest_own, own_layers = own_j["rank_asr_curve"], own_j["layers"]
+    else:  # full own-order curve not run yet -> just the rank-1 own-layer (L15) point
+        own_j = json.loads((RUNS / "reattack_restored_ownlayer_fixed.json").read_text())
+        rest_own, own_layers = own_j["rank_asr_curve"], own_j["layers"]
     # no-attack (rank-0) ASR from the eval artifacts
     a0_orig = json.loads((RUNS / "eval_original.json").read_text())["asr_harmful"]
     a0_rest = json.loads((RUNS / "eval_restored_balanced_2ep.json").read_text())["asr_harmful"]
 
     ranks = [int(k) for k in sorted(orig, key=int)]
+    own_ranks = [int(k) for k in sorted(rest_own, key=int)]
     xo = [0] + ranks
     yo = [a0_orig] + [orig[str(k)] for k in ranks]
-    yr = [a0_rest] + [rest[str(k)] for k in ranks]
+    yb = [a0_rest] + [rest_base[str(k)] for k in ranks]
+    xr = [0] + own_ranks
+    yr = [a0_rest] + [rest_own[str(k)] for k in own_ranks]
+
+    # first rank at/above the 0.80 jailbreak threshold, per model (own-order attacks)
+    kx_o = next((k for k in ranks if orig[str(k)] >= 0.80), None)
+    kx_r = next((k for k in own_ranks if rest_own[str(k)] >= 0.80), None)
 
     fig, ax = plt.subplots(figsize=(7.4, 4.7))
-    # jailbroken reference ceiling
-    ax.axhline(0.80, ls=(0, (4, 4)), lw=1.1, color=GRAY, zorder=1)
-    ax.text(3.0, 0.845, "jailbroken ceiling (0.80)", va="bottom", ha="center",
-            fontsize=9, color=GRAY)
+    # jailbreak threshold
+    ax.axhline(0.80, ls=(0, (4, 4)), lw=1.1, color=GRAY, zorder=1,
+               label="jailbreak threshold (0.80)")
 
-    ax.plot(xo, yo, "-o", color=VERMILLION, lw=2, ms=7, zorder=3, label="original")
-    ax.plot(xo, yr, "-o", color=BLUE, lw=2, ms=7, zorder=3, label="restored (balanced-2ep)")
+    ax.plot(xo, yo, "-o", color=VERMILLION, lw=2, ms=7, zorder=3,
+            label=f"original — own layer order (L{', '.join(map(str, orig_layers[:3]))}, …)")
+    ax.plot(xo, yb, "--o", color=BLUE, lw=1.6, ms=6, alpha=0.45, zorder=2,
+            label="restored — base model's layer order")
+    ax.plot(xr, yr, "-o", color=BLUE, lw=2, ms=7, zorder=3,
+            label=f"restored — own layer order (L{', '.join(map(str, own_layers[:3]))}, …)")
+
+    # ring the rank at which each model first crosses the threshold
+    for k, curve, c in ((kx_o, orig, VERMILLION), (kx_r, rest_own, BLUE)):
+        if k is not None:
+            ax.scatter([k], [curve[str(k)]], s=230, facecolors="none",
+                       edgecolors=c, linewidths=1.8, zorder=4)
 
     # direct end-labels
-    ax.text(6.02, yo[-1] - 0.015, " original", va="center", color=VERMILLION, fontsize=10, fontweight="bold")
-    ax.text(6.02, yr[-1] + 0.005, " restored", va="center", color=BLUE, fontsize=10, fontweight="bold")
+    # (the three curves can end within 0.01 of each other: stack labels top-down by end value,
+    #  at least GAP apart, centred on the curves' mean end value)
+    ends = [(yb[-1], " restored (base order)", "normal"), (yo[-1], " original", "bold")]
+    if xr[-1] == 6:
+        ends.append((yr[-1], " restored (own order)", "bold"))
+    ends.sort(key=lambda e: -e[0])
+    GAP = 0.05
+    ys = [e[0] for e in ends]
+    for i in range(1, len(ys)):
+        ys[i] = min(ys[i], ys[i - 1] - GAP)
+    shift = (sum(e[0] for e in ends) - sum(ys)) / len(ys)
+    for (y0, text, weight), y in zip(ends, ys):
+        ax.text(6.02, y + shift, text, va="center", color=INK, fontsize=9.5, fontweight=weight)
 
-    # annotate the two decisive points
-    ax.annotate("rank-1 suffices\n(0.83)", xy=(1, yo[1]), xytext=(1.25, 0.90),
-                fontsize=9, color=INK,
-                arrowprops=dict(arrowstyle="->", color=GRAY, lw=1))
-    ax.annotate("rank-1 blunted (0.60);\nclimbs with rank, never ≥0.8",
-                xy=(1, yr[1]), xytext=(1.5, 0.40), fontsize=9, color=INK,
-                arrowprops=dict(arrowstyle="->", color=GRAY, lw=1))
+    if kx_r is not None:
+        ax.annotate(f"restored jailbreaks at rank {kx_r}\n(its own layer 15)",
+                    xy=(kx_r, rest_own[str(kx_r)]), xytext=(1.35, 0.95), va="center", fontsize=9, color=INK,
+                    arrowprops=dict(arrowstyle="->", color=GRAY, lw=1))
+    if kx_o is not None:
+        ax.annotate(f"original needs rank {kx_o}", xy=(kx_o, orig[str(kx_o)]),
+                    xytext=(3.25, 0.5), fontsize=9, color=INK,
+                    arrowprops=dict(arrowstyle="->", color=GRAY, lw=1))
 
     ax.set_xlabel("rank of ablated subspace  (# directions removed;  0 = no attack)")
-    ax.set_ylabel("attack success rate  (Granite, 100 held-out harmful)")
-    ax.set_title("Re-attack: refusal is rank-1 in the base model, distributed after DPO")
-    ax.set_xlim(-0.2, 6.7)
+    ax.set_ylabel("attack success rate  (Granite, n=100 held-out)")
+    ax.set_title("Re-attack: DPO relocates refusal — one direction still breaks it"
+                 if kx_r == 1 else "Re-attack: rank-vs-ASR, original vs DPO-restored")
+    ax.set_xlim(-0.2, 7.05)
     ax.set_ylim(0.0, 1.0)
     ax.set_xticks(range(0, 7))
     ax.set_yticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
     ax.grid(axis="y", color=MUTED, alpha=0.28, lw=0.8)
-    ax.legend(loc="lower right", frameon=False, fontsize=10)
+    ax.legend(loc="lower right", frameon=False, fontsize=8.5)
     _despine(ax)
     fig.tight_layout()
     out = RUNS / "fig_reattack.png"
@@ -87,15 +131,19 @@ def reattack_fig():
 
 
 def frontier_fig():
-    # (label, ASR, over_refusal, group)  group: base | tax | good
-    pts = [
-        ("original",            0.18, 0.032, "base"),
-        ("jailbroken",          0.80, 0.012, "base"),
-        ("harmful-only 1ep",    0.19, 0.828, "tax"),
-        ("harmful-only 2ep",    0.19, 1.000, "tax"),
-        ("balanced 1ep",        0.37, 0.004, "good"),
-        ("balanced 2ep",        0.24, 0.004, "good"),
+    # (label, eval JSON tag, group)  group: base | tax | good — read from runs/eval_<tag>.json
+    states = [
+        ("original",         "original",              "base"),
+        ("jailbroken",       "jailbroken",            "base"),
+        ("harmful-only 1ep", "restored_1ep",          "tax"),
+        ("harmful-only 2ep", "restored_2ep",          "tax"),
+        ("balanced 1ep",     "restored_balanced_1ep", "good"),
+        ("balanced 2ep",     "restored_balanced_2ep", "good"),
     ]
+    pts = []
+    for name, tag, grp in states:
+        ev = json.loads((RUNS / f"eval_{tag}.json").read_text())
+        pts.append((name, ev["asr_harmful"], ev["over_refusal_benign"], grp))
     color = {"base": GRAY, "tax": VERMILLION, "good": BLUE}
     legend_name = {"base": "baseline states", "tax": "harmful-only DPO (alignment tax)",
                    "good": "balanced DPO (tax fixed)"}

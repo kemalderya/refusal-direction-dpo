@@ -1,0 +1,21 @@
+{
+  "tag": "original_fixed",
+  "judge": "granite",
+  "rank_asr_curve": {
+    "1": 0.73,
+    "2": 0.82,
+    "3": 0.69,
+    "4": 0.86,
+    "5": 0.81,
+    "6": 0.84
+  },
+  "min_rank_jailbreak": 2,
+  "layers": [
+    21,
+    20,
+    22,
+    15,
+    9,
+    11
+  ]
+}

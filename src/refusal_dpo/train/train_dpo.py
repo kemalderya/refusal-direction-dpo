@@ -2,7 +2,7 @@
 Phase 3 — restore refusal with DPO.
 
 This is the CV-critical step: real preference optimization, not imitation.
-Key mechanics worth understanding (and explaining in an interview):
+Key mechanics:
 
   loss = -log σ( β·[logπ_θ(chosen) - logπ_ref(chosen)]
                  - β·[logπ_θ(rejected) - logπ_ref(rejected)] )
@@ -25,7 +25,7 @@ import argparse, yaml
 from pathlib import Path
 import torch
 from datasets import load_dataset
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, set_seed
 from peft import LoraConfig
 from trl import DPOConfig, DPOTrainer
 
@@ -39,7 +39,11 @@ def main():
     ap.add_argument("--model", default=None, help="checkpoint to DPO (the jailbroken one)")
     ap.add_argument("--out", default=None)
     ap.add_argument("--epochs", type=int, default=None, help="override config epochs (e.g. sweep 1 vs 2)")
+    ap.add_argument("--seed", type=int, default=None,
+                    help="seed LoRA init + data order (omit = original runs: DPOConfig default 42)")
     a = ap.parse_args()
+    if a.seed is not None:
+        set_seed(a.seed)  # before the model/LoRA are built — DPOTrainer wraps PEFT pre-seed
     cfg = yaml.safe_load(Path(a.config).read_text())
     model_id = a.model or cfg["model_id"]
     out_dir = a.out or cfg["output_dir"]
@@ -71,6 +75,7 @@ def main():
         lr_scheduler_type="cosine", warmup_ratio=0.05,
         logging_steps=10, save_strategy="epoch",
         bf16=(dev == "cuda"), report_to=[],
+        **({"seed": a.seed} if a.seed is not None else {}),
     )
 
     trainer = DPOTrainer(

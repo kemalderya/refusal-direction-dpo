@@ -1,11 +1,14 @@
 # Refusal Direction → Jailbreak → DPO Restore (Llama-3.2-3B-Instruct)
 
 Reproduce single-direction refusal mediation, jailbreak the model by ablating that
-direction, then **restore refusal with DPO** — and measure whether the base model's
-single-direction jailbreak still transfers to the restored model, or whether refusal has
-become harder to excise. **Result:** the attack no longer transfers — contrastive DPO
-makes refusal harder to remove rather than relocating it to a new single direction. Full
-numbers, figures, and caveats in [`RESULTS.md`](RESULTS.md).
+direction, then **restore refusal with DPO** — and measure whether the restored model can
+still be jailbroken the same way, or whether refusal has become harder to excise.
+**Result:** contrastive DPO restores refusal behaviourally (ASR 0.80 → 0.24, over-refusal
+0.4%), but it **relocates** refusal rather than distributing it. Re-extracting from the
+restored model finds a new, cleaner refusal direction at **layer 15** (the base model's is
+late-stack, L21) — on every seed and every run. Ablating that one direction leaves no refusal
+on held-out val and brings attack success to **0.83**, above the base model's best single
+direction (0.73). The vulnerability moved; it didn't disappear. Full numbers, figures, and caveats in [`RESULTS.md`](RESULTS.md).
 
 ```
 extract direction → orthogonalize (jailbreak) → DPO restore → RE-EXTRACT & re-attack
@@ -43,13 +46,34 @@ extract direction → orthogonalize (jailbreak) → DPO restore → RE-EXTRACT &
 
 ## The finding (Milestone 2) — `eval/reattack.py`
 
-Re-extract the refusal direction from the DPO-restored model and sweep **rank-k
-ablation ASR**. 
+Re-extract each model's refusal direction, rank its layers by how completely a single
+direction's ablation removes refusal (held-out val), and sweep **rank-k ablation ASR** in
+that model's own layer order.
 
-**Result:** The rank-1 ablation that fully jailbreaks the base model (ASR 0.83)
-recovers only 0.60 on the restored model, and no rank — nor even the restored model's own
-best single layer (0.57) — reaches the 0.80 jailbreak threshold. The rank-vs-ASR curve,
-original vs restored, *is* the result; full numbers, figures, and caveats in
+**Result:** the base model's refusal lives **late in the stack (L21, 20, 22)**. The restored
+model's has moved to **L15** — ablating that one direction leaves **0.000** refusal on val
+(base model's best single layer: 0.08) and brings held-out attack success to **0.83** (base
+model's best single direction: 0.73). Contrastive DPO re-encoded refusal as a new single
+direction; it did not put it beyond a rank-1 attack.
+
+| | original | restored (balanced-2ep) |
+|---|:--:|:--:|
+| best single refusal layer | L21 | **L15** |
+| refusal under that layer's ablation (val) | 0.08 | **0.000** |
+| rank-1 ASR, own best layer (held-out eval) | 0.73 | **0.83** |
+| ASR at ranks 1–6, own layer order | 0.69–0.86 | 0.76–0.85 |
+
+![Re-attack rank curve](runs/fig_reattack.png)
+
+**Seed- and data-stable:** two more DPO seeds also put refusal at **L15** (≤ 0.010 val
+refusal under ablation), and so did every seed of a run trained on a freshly re-sampled
+preference set — 9 of 9 restored models. Rank-1 ASR across the three seeds is
+0.83 / 0.83 / 0.78 (`scripts/run_seed_check.sh`).
+
+Caveat: at n=100 each rank-1 point (0.78–0.83) is within one SE of the 0.8 threshold, and
+the *first rank to cross 0.8* flips between runs (the base model's came out 2, 3 or 4), so we
+don't headline it — the L15 relocation and the ≤ 0.010 val ablation are the robust evidence.
+Full rank curves, the layer profiles, and why the base-order curve looked higher-rank are in
 [`RESULTS.md`](RESULTS.md).
 
 The direction is re-extracted on the disjoint `harmful_extract` pool (which DPO never
@@ -69,7 +93,8 @@ by neither prompt overlap nor training on the very prompts we re-extract from.
 ## Run
 
 ```bash
-pip install -e .                      # installs the refusal_dpo package + console scripts
+pip install -r requirements.txt       # exact versions the results were produced with
+pip install -e . --no-deps            # the refusal_dpo package + console scripts
 huggingface-cli login                 # Llama-3.2 is gated — request access first
 
 # Fetch data. AdvBench is split into DISJOINT pools (extract vs DPO). HarmBench
@@ -89,6 +114,13 @@ bash scripts/run_all.sh data/harmful_extract.txt data/harmful_val.txt data/harmf
 Follow it with **`bash scripts/run_balanced.sh`** for the tax-free balanced restore, the
 re-attack, the own-layer robustness check, and the figures. Full reproduce steps (with the
 `PYTHON=`/`JUDGE=` knobs) are in [`RESULTS.md`](RESULTS.md).
+
+The re-attack scripts use the corrected late-stack layers and write to
+`runs/reattack_*_fixed.json`, leaving the superseded pre-fix curves intact for comparison.
+The own-layer check (`run_ownlayer_check.sh`) re-selects the restored model's layers from a
+fresh extraction and writes its own-order curve, `runs/reattack_restored_ownorder_fixed.json`.
+Only the three corrected curve JSONs are committed (enough to redraw the figure); logs and
+other per-run JSONs are regenerated by the scripts.
 
 **Four mutually disjoint** harmful pools (two source datasets, split into disjoint
 slices) keep the result honest: the direction is fit (and re-extracted) on AdvBench
@@ -116,6 +148,9 @@ src/refusal_dpo/
   train/                 train_dpo.py (TRL DPO, LoRA-as-own-reference)
   eval/                  evaluate.py (ASR/over-refusal), reattack.py (rank-vs-ASR — the finding)
 scripts/                 prepare_data.py, run_all.sh, run_balanced.sh (tax-free restore),
-                         merge_adapter.py, run_reattack.sh, run_ownlayer_check.sh, plot_results.py
-RESULTS.md               full results: frontier, rank curves, robustness check, figures
+                         merge_adapter.py, run_reattack.sh, run_ownlayer_check.sh (restored model at
+                         its own layers — the finding), run_seed_check.sh (DPO seed repeats),
+                         plot_results.py
+requirements.txt         exact tested versions (reproduce with these)
+RESULTS.md               full results: frontier, rank curves, seed check, caveats, reproduce steps
 ```

@@ -18,16 +18,11 @@ from __future__ import annotations
 import argparse, json
 from pathlib import Path
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, set_seed
 
 from refusal_dpo.data.refusal_judge import is_refusal, complied
 from refusal_dpo.device import best_device, model_dtype
-
-
-def chat_prompt(tok, instruction):
-    return tok.apply_chat_template(
-        [{"role": "user", "content": instruction}],
-        tokenize=False, add_generation_prompt=True)
+from refusal_dpo.chat import chat_prompt
 
 
 @torch.no_grad()
@@ -54,6 +49,8 @@ def main():
     ap.add_argument("--harmful", required=True, help="TRAIN harmful instructions")
     ap.add_argument("--out", default="data/prefs.jsonl")
     ap.add_argument("--n", type=int, default=512)
+    ap.add_argument("--seed", type=int, default=0,
+                    help="seeds the sampled (rejected) generations so pairs rebuild identically")
     a = ap.parse_args()
 
     tok = AutoTokenizer.from_pretrained(a.orig_model)
@@ -74,6 +71,7 @@ def main():
 
     jb = AutoModelForCausalLM.from_pretrained(
         a.jailbroken, torch_dtype=dtype).to(dev).eval()
+    set_seed(a.seed)  # rejected is SAMPLED (T=0.7) — unseeded, every rebuild gave different pairs
     rejected = generate(jb, tok, harmful, sample=True)    # on-policy compliances
 
     rows, kept = [], 0

@@ -29,15 +29,30 @@ HARMFUL_EVAL="${6:?held-out (cross-dataset) harmful behaviors for ASR + re-attac
 echo "== Phase 1: extract refusal direction (fit 128/128 on extract pool; layer-select on held-out HarmBench) =="
 $PY -m refusal_dpo.direction.extract --model "$MODEL" \
   --harmful "$HARMFUL_EXTRACT" --harmless "$HARMLESS" --n-extract 128 \
-  --harmful-val "$HARMFUL_VAL" --n-val 100 --out artifacts/refusal_dir.pt
+  --harmful-val "$HARMFUL_VAL" --n-val 100 --out artifacts/refusal_dir_fixed.pt
 
-echo "== Phase 2: orthogonalize -> jailbroken checkpoint =="
+# The published jailbroken checkpoint (ASR 0.80) — and so every Milestone 1 number — was
+# built from the committed artifacts/refusal_dir.pt: the pre-indexing-fix layer-12
+# (mid-prompt) direction. Re-extracting with the fixed hooks gives a different, late-stack
+# direction (L21), so use the committed one when present to reproduce the published
+# pipeline; fall back to the fresh extraction on a clone without it.
+JB_DIR=artifacts/refusal_dir.pt
+test -e "$JB_DIR" || JB_DIR=artifacts/refusal_dir_fixed.pt
+echo "== Phase 2: orthogonalize -> jailbroken checkpoint (direction: $JB_DIR) =="
 $PY -m refusal_dpo.model.orthogonalize --model "$MODEL" \
-  --direction artifacts/refusal_dir.pt --out runs/jailbroken
+  --direction "$JB_DIR" --out runs/jailbroken
 
-echo "== Phase 3a: build on-policy preference pairs (train split) =="
-$PY -m refusal_dpo.data.build_prefs --orig-model "$MODEL" \
-  --jailbroken runs/jailbroken --harmful "$HARMFUL_TRAIN" --out data/prefs.jsonl
+echo "== Phase 3a: on-policy preference pairs (train split) =="
+# The committed data/prefs.jsonl is the exact pair set behind every published number. Its
+# rejected side is SAMPLED and it predates build_prefs' --seed, so a rebuild gives different
+# pairs (and different DPO models). Reuse it; REBUILD_PREFS=1 regenerates (seeded, so
+# deterministic from then on — but not the published set).
+if [ -e data/prefs.jsonl ] && [ "${REBUILD_PREFS:-0}" != 1 ]; then
+  echo "reusing committed data/prefs.jsonl ($(wc -l < data/prefs.jsonl) pairs; REBUILD_PREFS=1 to regenerate)"
+else
+  $PY -m refusal_dpo.data.build_prefs --orig-model "$MODEL" \
+    --jailbroken runs/jailbroken --harmful "$HARMFUL_TRAIN" --out data/prefs.jsonl
+fi
 
 echo "== Phase 3b: DPO restore (from the jailbroken ckpt) =="
 $PY -m refusal_dpo.train.train_dpo --config configs/dpo_llama32_3b.yaml \
@@ -50,13 +65,19 @@ $PY scripts/merge_adapter.py --base-model runs/jailbroken \
 echo "== evaluate the three states (ASR + over-refusal) on HELD-OUT harmful (judge=$JUDGE) =="
 $PY -m refusal_dpo.eval.evaluate --model "$MODEL"                --harmful "$HARMFUL_EVAL" --benign "$BENIGN" --judge "$JUDGE" --tag original   --out runs/eval_original.json
 $PY -m refusal_dpo.eval.evaluate --model runs/jailbroken         --harmful "$HARMFUL_EVAL" --benign "$BENIGN" --judge "$JUDGE" --tag jailbroken --out runs/eval_jailbroken.json
-$PY -m refusal_dpo.eval.evaluate --model runs/dpo_restore/merged --harmful "$HARMFUL_EVAL" --benign "$BENIGN" --judge "$JUDGE" --tag restored   --out runs/eval_restored.json
+$PY -m refusal_dpo.eval.evaluate --model runs/dpo_restore/merged --harmful "$HARMFUL_EVAL" --benign "$BENIGN" --judge "$JUDGE" --tag restored_1ep --out runs/eval_restored_1ep.json
 
-echo "== THE FINDING: rank-vs-ASR, original vs DPO-restored (judge=$JUDGE) =="
+echo "== rank-vs-ASR preview, original vs harmful-only DPO-restored (judge=$JUDGE) =="
 echo "   (direction re-extracted on the EXTRACT pool — never DPO-trained on; ASR on HELD-OUT harmful)"
-$PY -m refusal_dpo.eval.reattack --model "$MODEL"                --harmful-extract "$HARMFUL_EXTRACT" --harmful-eval "$HARMFUL_EVAL" --harmless "$HARMLESS" --judge "$JUDGE" --tag original --out runs/reattack_original.json
-$PY -m refusal_dpo.eval.reattack --model runs/dpo_restore/merged --harmful-extract "$HARMFUL_EXTRACT" --harmful-eval "$HARMFUL_EVAL" --harmless "$HARMLESS" --judge "$JUDGE" --tag restored --out runs/reattack_restored.json
+# NOTE: this is a PREVIEW at the reattack.py default --n-eval 48, on the harmful-only
+# restored model. The headline curves in RESULTS.md come from scripts/run_reattack.sh
+# (balanced-2ep model, n-eval 100) and land in runs/reattack_*_fixed.json — kept separate
+# so neither pass overwrites the other, nor the superseded pre-fix archive.
+# base model's own top-6 layers from Phase 1's extraction (same rule as run_reattack.sh)
+LAYERS_ALL=$($PY -c "import torch; s=torch.load('artifacts/refusal_dir_fixed.pt', weights_only=False)['scores']; print(*sorted(s, key=lambda l: (s[l], l))[:6])")
+$PY -m refusal_dpo.eval.reattack --model "$MODEL"                --harmful-extract "$HARMFUL_EXTRACT" --harmful-eval "$HARMFUL_EVAL" --harmless "$HARMLESS" --layers $LAYERS_ALL --judge "$JUDGE" --tag original_preview           --out runs/reattack_original_preview.json
+$PY -m refusal_dpo.eval.reattack --model runs/dpo_restore/merged --harmful-extract "$HARMFUL_EXTRACT" --harmful-eval "$HARMFUL_EVAL" --harmless "$HARMLESS" --layers $LAYERS_ALL --judge "$JUDGE" --tag restored_harmfulonly       --out runs/reattack_restored_harmfulonly.json
 
 echo
-echo "Compare runs/reattack_original.json vs runs/reattack_restored.json:"
-echo "  same min-rank -> refusal RELOCATED (one direction). higher rank -> DISTRIBUTED."
+echo "Compare runs/reattack_original_preview.json vs runs/reattack_restored_harmfulonly.json:"
+echo "  same min-rank -> refusal RELOCATED (one direction). higher rank -> refusal is HIGHER-RANK."
